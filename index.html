@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>__ASSISTANT_NAME__</title>
+<!-- installable home-screen web app (fullscreen, native feel) -->
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="__ASSISTANT_NAME__">
+<meta name="theme-color" content="#020806">
+<style>
+  /* ---- STARK palette. To reskin, change --acc (CSS) + ACCENT_HUE (JS) only. ---- */
+  :root{
+    --acc:#33ff99; --acc-dim:#0e4a2e; --bg:#020806; --ink:#cfffe0;
+    --warn:#eaff5c; --hot:#ff5d78; --ok:#57ffb0;
+    --safeT:env(safe-area-inset-top,0px);
+    --safeB:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);
+    font-family:"SF Mono",ui-monospace,"Roboto Mono",monospace;overflow:hidden;-webkit-user-select:none}
+  body{display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
+
+  #aura{position:fixed;inset:0;z-index:0;opacity:.5}
+  .grid{position:fixed;inset:0;z-index:0;opacity:.05;
+    background-image:linear-gradient(var(--acc-dim) 1px,transparent 1px),
+      linear-gradient(90deg,var(--acc-dim) 1px,transparent 1px);
+    background-size:46px 46px;mask-image:radial-gradient(circle at 50% 50%,#000 0%,transparent 78%)}
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(circle at 50% 45%,transparent 42%,rgba(0,0,0,.72) 100%)}
+
+  #core{position:relative;z-index:2;width:min(78vw,66vh);height:min(78vw,66vh);
+    filter:drop-shadow(0 0 42px rgba(45,255,150,.3))}
+
+  .hud{position:fixed;z-index:5;color:var(--acc);font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:.85}
+  .hud.tl{top:calc(var(--safeT) + 20px);left:24px;text-align:left}
+  .hud.tr{top:calc(var(--safeT) + 20px);right:24px;text-align:right}
+  .hud .big{font-size:15px;color:var(--ink);letter-spacing:3px}
+  .hud #sub{font-size:10px;opacity:.7;margin-top:2px}
+  .hud #model-ind{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;opacity:.9;margin-top:11px;padding:3px 9px;border:1px solid rgba(255,255,255,.18);border-radius:20px;letter-spacing:1px;transition:color .3s,border-color .3s,box-shadow .3s}
+  .hud #model-ind::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+  .hud #model-ind.heavy{color:var(--warn);border-color:var(--warn);box-shadow:0 0 12px rgba(255,170,60,.25)}
+  .hud #model-ind.fast{color:var(--ok);border-color:var(--ok);box-shadow:0 0 12px rgba(60,255,170,.2)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);margin-right:6px;vertical-align:middle}
+  .dot.off{background:#456;box-shadow:none}
+
+  #wake{position:fixed;z-index:6;top:calc(var(--safeT) + 18px);left:50%;transform:translateX(-50%);
+    font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--acc);opacity:.72;
+    border:1px solid var(--acc-dim);border-radius:14px;padding:5px 12px;background:rgba(2,20,32,.55);white-space:nowrap}
+  #wake.armed{color:#001018;background:var(--acc);border-color:var(--acc);opacity:.95;box-shadow:0 0 16px rgba(45,255,150,.5)}
+
+  #state{position:fixed;z-index:5;top:calc(50% + min(39vw,33vh) + 12px);
+    font-size:13px;letter-spacing:6px;text-transform:uppercase;color:var(--acc);
+    text-shadow:0 0 14px rgba(45,255,150,.6);transition:color .3s}
+
+  #caption{position:fixed;z-index:5;bottom:calc(var(--safeB) + 120px);max-width:86vw;text-align:center;
+    font-size:19px;color:#fff;opacity:0;transition:opacity .2s;min-height:26px;max-height:22vh;
+    overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+    text-shadow:0 0 18px rgba(45,255,150,.45)}
+  #caption::-webkit-scrollbar{width:4px}
+  #caption::-webkit-scrollbar-thumb{background:rgba(45,255,150,.35);border-radius:2px}
+
+  #log{position:fixed;z-index:5;left:24px;bottom:calc(var(--safeB) + 92px);max-width:30vw;max-height:34vh;overflow:hidden;
+    font-size:12px;line-height:1.5;opacity:.55;mask-image:linear-gradient(transparent,#000 45%)}
+  #log .you{color:#8fe6ff}
+  #log .jar{color:var(--ink)}
+  #log b{opacity:.5;font-weight:400}
+
+  .controls{position:fixed;z-index:6;bottom:calc(var(--safeB) + 26px);display:flex;gap:14px;align-items:center}
+  #mic{width:74px;height:74px;border-radius:50%;border:1.5px solid var(--acc);
+    background:radial-gradient(circle at 50% 40%,rgba(45,255,150,.28),rgba(45,255,150,.05));
+    color:var(--acc);font-size:26px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 24px rgba(45,255,150,.28)}
+  #mic:hover{background:rgba(45,255,150,.32)}
+  #mic.live{border-color:var(--hot);color:var(--hot);box-shadow:0 0 30px rgba(255,93,120,.5);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+  #text{width:min(52vw,520px);height:46px;background:rgba(4,16,26,.72);border:1px solid var(--acc-dim);
+    border-radius:23px;color:#fff;padding:0 20px;font-family:inherit;font-size:14px;outline:none}
+  #text:focus{border-color:var(--acc);box-shadow:0 0 16px rgba(45,255,150,.25)}
+
+  .err{position:fixed;z-index:9;top:calc(var(--safeT) + 58px);color:var(--hot);font-size:12px;opacity:0;transition:.3s}
+
+  /* hive health panel */
+  #hive{position:fixed;z-index:5;top:calc(var(--safeT) + 76px);left:24px;font-size:10px;letter-spacing:1px;opacity:.85;text-transform:uppercase}
+  #hive .hl{color:var(--acc);opacity:.6;font-size:9px;margin-bottom:5px;letter-spacing:2px}
+  #hive .n{display:flex;align-items:center;gap:7px;line-height:1.95;color:var(--ink)}
+  #hive .d{width:7px;height:7px;border-radius:50%;background:#456;flex:none}
+  #hive .d.up{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+  #hive .d.down{background:var(--hot);box-shadow:0 0 7px var(--hot)}
+
+  /* system vitals panel (bottom-right, mirrors the hive panel top-left) */
+  #sys{position:fixed;z-index:5;right:24px;bottom:calc(var(--safeB) + 92px);width:184px;
+    font-size:10px;letter-spacing:1px;text-transform:uppercase;opacity:.85}
+  #sys .hl{color:var(--acc);opacity:.6;font-size:9px;margin-bottom:5px;letter-spacing:2px;text-align:right}
+  #sys .row{display:flex;justify-content:space-between;align-items:baseline;line-height:1.8;color:var(--ink)}
+  #sys .lbl{opacity:.5}
+  #sys .val{color:var(--acc);font-variant-numeric:tabular-nums}
+  #sys .bar{position:relative;height:3px;background:rgba(45,255,150,.12);border-radius:2px;overflow:hidden;margin:1px 0 5px}
+  #sys .bar i{position:absolute;inset:0;transform-origin:left;transform:scaleX(0);border-radius:2px;
+    background:linear-gradient(90deg,var(--acc-dim),var(--acc));
+    transition:transform .9s cubic-bezier(.22,.9,.24,1)}
+  #sys .bar.hot i{background:linear-gradient(90deg,#7a5a10,var(--warn))}
+  #spark{width:100%;height:22px;display:block;margin-top:5px;opacity:.9}
+
+  /* ---------- phone: clean it up, clear the notch, drop the sprawl ---------- */
+  @media (max-width:760px){
+    #core{width:82vw;height:82vw}
+    .hud .big{font-size:13px;letter-spacing:2px}
+    .hud.tl{left:16px}
+    .hud.tr{right:16px;font-size:11px}
+    #wake{top:calc(var(--safeT) + 60px)}      /* below the title row, no overlap */
+    #hive{top:calc(var(--safeT) + 96px);font-size:9.5px}
+    #log{display:none}                          /* the sprawling transcript is the worst offender on mobile */
+    #state{top:calc(50% + 42vw + 10px)}
+    #caption{bottom:calc(var(--safeB) + 116px);font-size:18px;max-height:26vh}
+    /* compact vitals: keep the living parts (bars, spark, latency), drop the static rows */
+    #sys{right:16px;bottom:auto;top:calc(var(--safeT) + 96px);width:118px;font-size:9px}
+    #sys .row.opt{display:none}
+    #spark{height:16px}
+  }
+</style>
+</head>
+<body>
+  <canvas id="aura"></canvas>
+  <div class="grid"></div>
+  <div class="vignette"></div>
+  <!-- keep-awake fallback: iOS won't sleep while a video is playing (Wake Lock is ignored in app mode) -->
+  <video id="nosleep" muted loop playsinline webkit-playsinline preload="auto"
+    style="position:fixed;width:2px;height:2px;opacity:0;left:0;bottom:0;z-index:-1;pointer-events:none">
+    <source src="/keepawake.mp4" type="video/mp4">
+  </video>
+
+  <div class="hud tl"><div class="big">__ASSISTANT_BIG__</div><div id="sub">__MACHINE_LABEL__</div></div>
+  <div class="hud tr">
+    <div><span class="dot" id="d-brain"></span>BRAIN</div>
+    <div><span class="dot" id="d-voice"></span>VOICE</div>
+    <div><span class="dot" id="d-mic"></span>MIC</div>
+    <div id="model-ind">—</div>
+  </div>
+  <div id="wake">say “__ASSISTANT_TITLE__”</div>
+  <div id="hive"></div>
+
+  <canvas id="core"></canvas>
+  <div id="state">standby</div>
+  <div id="caption"></div>
+  <div id="log"></div>
+  <div id="sys">
+    <div class="hl">◈ sys</div>
+    <div class="row"><span class="lbl">cpu</span><span class="val" id="s-cpu">—</span></div>
+    <div class="bar" id="b-cpu"><i></i></div>
+    <div class="row"><span class="lbl">ram</span><span class="val" id="s-ram">—</span></div>
+    <div class="bar" id="b-ram"><i></i></div>
+    <div class="row opt"><span class="lbl">disk</span><span class="val" id="s-disk">—</span></div>
+    <div class="row"><span class="lbl">link</span><span class="val" id="s-ping">—</span></div>
+    <div class="row"><span class="lbl">reply</span><span class="val" id="s-reply">—</span></div>
+    <div class="row opt"><span class="lbl">session</span><span class="val" id="s-sess">—</span></div>
+    <div class="row opt"><span class="lbl">bridge</span><span class="val" id="s-up">—</span></div>
+    <canvas id="spark"></canvas>
+  </div>
+  <div class="err" id="err"></div>
+
+  <div class="controls">
+    <input id="text" placeholder="type to __ASSISTANT_TITLE__…" autocomplete="off">
+    <button id="mic" title="tap to talk (or just say __ASSISTANT_TITLE__)" aria-label="talk">
+      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2.5" width="6" height="11.5" rx="3"/>
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>
+        <line x1="12" y1="17.5" x2="12" y2="21"/>
+        <line x1="8.5" y1="21" x2="15.5" y2="21"/>
+      </svg>
+    </button>
+  </div>
+
+<script>
+const JARVIS_TOKEN = "__JARVIS_TOKEN__";
+const AUTH_HEADERS = { "X-Jarvis-Token": JARVIS_TOKEN };
+/* TV mode (?tv=1, set by the Hive TV app): no mic, no keyboard, OK is taken by the
+   app as the screen-flip key — so hide talk/type affordances and label what OK does. */
+const TV_MODE = new URLSearchParams(location.search).has("tv");
+const BRAIN_ENDPOINT = "/think";
+const SPEAK_ENDPOINT = "/speak";
+const $ = s => document.querySelector(s);
+
+/* ---------- accent (single source of truth for the canvas color) ---------- */
+const ACCENT_HUE = 135;   // green. blue = ~200. Change this + :root --acc to reskin.
+const HUE = { standby:ACCENT_HUE, listening:ACCENT_HUE+8, thinking:ACCENT_HUE-6, speaking:ACCENT_HUE-12 };
+
+let state = "standby";
+function setState(s){
+  state = s;
+  $("#state").textContent = s;
+  const c = {standby:"var(--acc)",listening:"var(--hot)",thinking:"var(--warn)",speaking:"var(--ok)"}[s];
+  $("#state").style.color = c;
+}
+function flash(msg){ const e=$("#err"); e.textContent=msg; e.style.opacity=1; setTimeout(()=>e.style.opacity=0,3500); }
+let captionAutoScroll = true;
+function caption(t){
+  const c=$("#caption"); c.textContent=t; c.style.opacity=t?1:0;
+  if(captionAutoScroll) c.scrollTop = c.scrollHeight;
+}
+$("#caption").addEventListener("scroll", ()=>{
+  const c=$("#caption");
+  captionAutoScroll = (c.scrollHeight - c.scrollTop - c.clientHeight) < 24;
+});
+function logLine(who,t){
+  const d=document.createElement("div");
+  d.className = who==="you"?"you":"jar";
+  d.innerHTML = `<b>${who==="you"?"__OWNER_UPPER__":"__ASSISTANT_NAME__"}:</b> ${t}`;
+  $("#log").prepend(d);
+  while($("#log").children.length>12) $("#log").lastChild.remove();
+}
+
+/* ---------- wake word + conversation gate ---------- */
+/* Wake word. Deliberately fuzzy — speech recognition mangles names, so the default
+   /\bjar+vis\b/ also catches "jarrvis"/"jaarvis". Set wake_regex in config.json to
+   match yours (test it against what the transcriber ACTUALLY hears, not the spelling). */
+const WAKE = new RegExp(__WAKE_REGEX__, "i");
+const ARM_MS = 45000;
+let armed = false, armTimer = null, sticky = false;
+let busy = false;
+let pending = "", speakTimer = null;
+let speakEndedAt = 0;
+const END_GRACE = 2100;   // wait a bit longer for a real pause so I don't cut you off mid-sentence
+const ECHO_COOLDOWN = 1500;   // longer deaf window after I speak — kills room echo / speaker bleed
+
+function setWakeBadge(){
+  const w = $("#wake");
+  if(TV_MODE){ w.textContent = "press OK to talk"; return; }
+  if(sticky){ w.classList.add("armed"); w.textContent = "conversation on"; }
+  else if(armed){ w.classList.add("armed"); w.textContent = "listening…"; }
+  else { w.classList.remove("armed"); w.textContent = "say “__ASSISTANT_TITLE__”"; }
+}
+function resetArmTimer(){ clearTimeout(armTimer); if(!sticky) armTimer = setTimeout(disarm, ARM_MS); }
+function arm(){ armed = true; resetArmTimer(); setWakeBadge(); if(state==="standby") setState("listening"); }
+function disarm(){ if(sticky) return; armed = false; clearTimeout(armTimer); setWakeBadge(); if(state==="listening") setState("standby"); }
+
+/* ---------- audio engine ---------- */
+let actx, analyser, micStream, micSrc, freq;
+let micAnalyser, micFreq, micWired=false;
+let level = 0;
+const player = new Audio();
+player.setAttribute("playsinline","");
+let endSpeak = null;
+
+let audioUnlocked = false;
+const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+function unlockAudio(){
+  ensureCtx();
+  if(audioUnlocked) return;
+  audioUnlocked = true;
+  try{ player.src = SILENT; const p = player.play(); if(p && p.catch) p.catch(()=>{}); }catch(e){}
+}
+document.addEventListener("pointerdown", unlockAudio);
+
+/* keep the phone screen awake while Jarvis is open (no more tapping to stop sleep) */
+let wakeLock = null;
+async function keepAwake(){
+  // Official way (works on desktop + newer Safari):
+  try{
+    if("wakeLock" in navigator && document.visibilityState === "visible"){
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  }catch(e){}
+  // Fallback that works in the iOS home-screen app: keep a tiny video playing.
+  try{ const v=$("#nosleep"); if(v){ const p=v.play(); if(p&&p.catch) p.catch(()=>{}); } }catch(e){}
+}
+function resumeListening(){   // re-arm the mic after iOS suspends it in the background
+  try{ ensureCtx(); }catch(e){}
+  if(ambient && !busy && state!=="thinking" && state!=="speaking"){
+    try{ rec && rec.start(); }catch(e){}
+  }
+}
+// Any tap re-arms listening (a fresh touch is what iOS requires to reopen the mic) — beats typing.
+document.addEventListener("pointerdown", ()=>{ keepAwake(); resumeListening(); });
+// And try automatically the moment we return to the foreground.
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState !== "visible") return;
+  keepAwake();
+  setTimeout(resumeListening, 250);
+});
+keepAwake();
+
+async function ensureCtx(){
+  if(!actx){
+    actx = new (window.AudioContext||window.webkitAudioContext)();
+    analyser = actx.createAnalyser(); analyser.fftSize = 256;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+  }
+  if(actx.state==="suspended") await actx.resume();
+}
+function analyseFrom(node){ try{ node.connect(analyser); }catch(e){} }
+function readLevel(){
+  if(!analyser) return;
+  analyser.getByteFrequencyData(freq);
+  let sum=0; for(let i=0;i<freq.length;i++) sum+=freq[i];
+  level += ((sum/freq.length)/255 - level)*0.25;
+}
+
+/* barge-in: your voice cuts my audio when the mic spikes (only while armed) */
+const BARGE_THRESHOLD = 0.38, BARGE_FRAMES = 9;
+const VOICE_INTERRUPT = false;   // OFF by default — safe on a speaker (no self-pickup). Tap the reactor
+                                 // to interrupt. Flip true only when on headphones for hands-free interrupt.
+let bargeHits = 0;
+function bargeIn(){
+  if(state!=="speaking" && state!=="thinking") return;
+  try{ if(currentReq) currentReq.abort(); }catch(e){}   // kill the in-flight brain turn too
+  try{ if(speaker) speaker.kill(); }catch(e){}          // stop the incremental speech queue
+  try{ player.pause(); }catch(e){}
+  try{ window.speechSynthesis && speechSynthesis.cancel(); }catch(e){}
+  if(endSpeak){ const r=endSpeak; endSpeak=null; r(); }
+}
+function watchBarge(){
+  requestAnimationFrame(watchBarge);
+  if(!VOICE_INTERRUPT || !micAnalyser || state!=="speaking" || !armed){ bargeHits=0; return; }
+  micAnalyser.getByteFrequencyData(micFreq);
+  let sum=0; for(let i=0;i<micFreq.length;i++) sum+=micFreq[i];
+  if((sum/micFreq.length)/255 > BARGE_THRESHOLD){ if(++bargeHits>=BARGE_FRAMES){ bargeHits=0; bargeIn(); } }
+  else bargeHits=0;
+}
+watchBarge();
+
+/* ---------- the arc-reactor core ---------- */
+const cv = $("#core"), ctx = cv.getContext("2d");
+/* Cap the backing-store ratio at 2 — dpr-3 phones render 2.25x the pixels for zero
+   visible gain, and that overdraw is exactly what makes the orb stutter on mobile. */
+const DPR = () => Math.min(devicePixelRatio||1, 2);
+function sizeCanvas(){ const d=DPR(); const s=cv.clientWidth; cv.width=s*d; cv.height=s*d; ctx.setTransform(d,0,0,d,0,0); }
+new ResizeObserver(sizeCanvas).observe(cv); sizeCanvas();
+
+/* Real delta-time: a fixed 0.016 assumed 60Hz, so the whole scene ran fast on 120Hz
+   ProMotion and slowed to molasses when a frame dropped. Now motion speed is
+   identical on every screen and glides through frame hiccups. */
+let t=0, lastTs=0;
+function draw(ts){
+  requestAnimationFrame(draw);
+  readLevel();
+  const dt = lastTs ? Math.min((ts-lastTs)/1000, 0.05) : 0.016;
+  lastTs = ts;
+  t += dt;
+  const s = cv.clientWidth, cx=s/2, cy=s/2;
+  ctx.clearRect(0,0,s,s);
+  const hue = HUE[state];
+  const amp = (state==="standby") ? 0.05 + 0.035*Math.sin(t*1.5) : 0.05 + level*0.85;
+  const R = s*0.28;
+
+  // outer instrument tick-dial (rotating)
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(t*0.12);
+  for(let i=0;i<72;i++){
+    const a=(i/72)*Math.PI*2, long=(i%6===0);
+    const r0=R*1.30, r1=r0+(long?12:6);
+    ctx.beginPath();
+    ctx.strokeStyle=`hsla(${hue},100%,72%,${long?0.5:0.2})`;
+    ctx.lineWidth=long?2:1;
+    ctx.moveTo(Math.cos(a)*r0,Math.sin(a)*r0); ctx.lineTo(Math.cos(a)*r1,Math.sin(a)*r1); ctx.stroke();
+  }
+  ctx.restore();
+
+  // segmented rotating arcs
+  for(let k=0;k<3;k++){
+    const rr=R*(1.06+k*0.09)+amp*16*(k+1), dir=k%2?-1:1, seg=6+k*2;
+    ctx.lineWidth=2;
+    for(let j=0;j<seg;j++){
+      const a0=(j/seg)*Math.PI*2 + t*0.28*dir, a1=a0+(Math.PI*2/seg)*0.62;
+      ctx.beginPath(); ctx.strokeStyle=`hsla(${hue},100%,66%,${0.32-k*0.07})`;
+      ctx.arc(cx,cy,rr,a0,a1); ctx.stroke();
+    }
+  }
+
+  // audio-reactive frequency bars (map all 72 spokes across the full spectrum —
+  // i*2 used to run past the 128 analyser bins, so a third of the dial never moved)
+  if(analyser){
+    for(let i=0;i<72;i++){
+      const a=(i/72)*Math.PI*2 - Math.PI/2, v=(freq[(i*freq.length/72)|0]||0)/255;
+      const r0=R*0.84, r1=r0 + v*R*0.5*(state==="standby"?0.2:1);
+      ctx.beginPath();
+      ctx.strokeStyle=`hsla(${hue},100%,${62+v*30}%,${0.22+v*0.6})`; ctx.lineWidth=2;
+      ctx.moveTo(cx+Math.cos(a)*r0, cy+Math.sin(a)*r0); ctx.lineTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1); ctx.stroke();
+    }
+  }
+
+  // reactor glow
+  const coreR = R*(0.6 + amp*0.4);
+  const g = ctx.createRadialGradient(cx,cy,0,cx,cy,coreR*1.35);
+  g.addColorStop(0,`hsla(${hue},100%,78%,0.92)`);
+  g.addColorStop(0.4,`hsla(${hue},100%,60%,0.35)`);
+  g.addColorStop(1,`hsla(${hue},100%,50%,0)`);
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,coreR*1.35,0,Math.PI*2); ctx.fill();
+
+  // triangular reactor core (two nested triangles, gently rocking)
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(Math.sin(t*0.25)*0.05);
+  for(let ring=0; ring<2; ring++){
+    const tr=coreR*(0.95-ring*0.38);
+    ctx.beginPath();
+    for(let p=0;p<3;p++){
+      const a=-Math.PI/2 + p*(Math.PI*2/3);
+      const x=Math.cos(a)*tr, y=Math.sin(a)*tr;
+      p===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle=`hsla(${hue},100%,${82-ring*8}%,${0.9-ring*0.25})`;
+    ctx.lineWidth=3-ring; ctx.stroke();
+    if(ring===1){ ctx.fillStyle=`hsla(${hue},100%,86%,0.5)`; ctx.fill(); }
+  }
+  ctx.restore();
+
+  // bright center + inner ring
+  ctx.beginPath(); ctx.arc(cx,cy,coreR*0.12,0,Math.PI*2); ctx.fillStyle=`hsla(${hue},100%,94%,0.95)`; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,R*0.74,0,Math.PI*2); ctx.strokeStyle=`hsla(${hue},100%,70%,0.4)`; ctx.lineWidth=1.5; ctx.stroke();
+}
+requestAnimationFrame(draw);
+
+/* ---------- speech recognition ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec=null, ambient=false;
+if(SR){
+  rec = new SR();
+  rec.continuous=false; rec.interimResults=true; rec.lang="en-US";
+  rec.onstart = ()=>{ $("#d-mic").classList.remove("off"); if(armed) $("#mic").classList.add("live"); };
+  rec.onresult = e=>{
+    if(VOICE_INTERRUPT && state==="speaking") bargeIn();
+    if(busy || state==="speaking") return;   // deaf while I speak — never hear my own voice
+    if(Date.now() - speakEndedAt < ECHO_COOLDOWN) return;
+    let interim="",final="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const tr=e.results[i][0].transcript;
+      if(e.results[i].isFinal) final+=tr; else interim+=tr;
+    }
+    if(final.trim()) pending = (pending ? pending+" " : "") + final.trim();
+    if(armed) caption(interim || pending);
+    if(interim || final){ clearTimeout(speakTimer); speakTimer = setTimeout(finishUtterance, END_GRACE); }
+  };
+  rec.onerror = e=>{ flash("speech: "+(e.error||"error")); };
+  rec.onend = ()=>{ $("#mic").classList.toggle("live", armed);
+    if(ambient && !busy && state!=="thinking" && state!=="speaking"){ try{ rec.start(); }catch(e){} } };
+}else{ $("#d-mic").classList.add("off"); }
+
+function stripWake(txt){ return txt.replace(WAKE,"").replace(/^[\s,.:;!\-]+/,"").trim(); }
+function finishUtterance(){
+  const heard = pending.trim(); pending = "";
+  if(!heard) return;
+  caption("");
+  if(armed){ if(busy) return; resetArmTimer(); send(stripWake(heard)); }
+  else if(WAKE.test(heard)){ arm(); const rest = stripWake(heard); if(rest.length >= 2) send(rest); }
+}
+
+async function startAmbient(){
+  if(!rec){ flash("no speech recognition — use Safari/Chrome"); return; }
+  await ensureCtx();
+  try{
+    if(!micStream){
+      micStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+      micSrc = actx.createMediaStreamSource(micStream);
+    }
+  }catch(e){ flash("no mic access — tap the reactor to allow it"); return; }
+  if(!micWired){
+    micAnalyser = actx.createAnalyser(); micAnalyser.fftSize = 512;
+    micFreq = new Uint8Array(micAnalyser.frequencyBinCount);
+    try{ micSrc.connect(micAnalyser); micWired=true; }catch(e){}
+  }
+  analyseFrom(micSrc);
+  ambient = true;
+  try{ rec.start(); }catch(e){}
+  $("#d-mic").classList.remove("off");
+}
+
+async function tapTalk(){
+  unlockAudio();
+  // tap while I'm talking OR thinking = stop me (manual interrupt / cancel the turn)
+  if(state==="speaking" || state==="thinking"){ bargeIn(); return; }
+  if(sticky){ sticky=false; disarm(); return; }
+  await startAmbient();
+  sticky = true; arm();
+}
+$("#mic").onclick = tapTalk;
+$("#core").onclick = tapTalk;
+
+/* ---------- talk to the brain (STREAMING) ----------
+   /think_stream sends NDJSON events as Claude generates: text deltas stream onto the
+   caption like live subtitles, and completed sentences go straight to TTS — so Jarvis
+   starts SPEAKING sentence 1 while the brain is still writing sentence 3. Tap the
+   reactor mid-thought to abort the whole turn. Falls back to the classic /think
+   round-trip if the stream fails. */
+let currentReq = null;   // AbortController for the in-flight turn (bargeIn aborts it)
+let speaker = null;      // active incremental speech queue
+
+/* Incremental speech queue: sentences get pushed as they stream in; clips are
+   synthesized via /speak and played in order, prefetching the next clip while the
+   current one plays. First sentence stands alone so audio starts fast; later
+   sentences merge into ~220-char chunks so we don't fire a request per fragment. */
+function makeSpeaker(){
+  const sp = { q:[], done:false, stop:false, spoke:false, active:false };
+  sp.whenDone = new Promise(res=> sp._fin = res);
+  sp.push = t => {
+    t = (t||"").replace(/\s+/g," ").trim();
+    if(!t || sp.stop) return;
+    const last = sp.q[sp.q.length-1];
+    if(last && !last.taken && (sp.spoke || sp.q.length>1) && (last.text.length + t.length) < 220)
+      last.text += " " + t;
+    else sp.q.push({text:t, taken:false});
+    if(!sp.active) sp.run();
+  };
+  sp.run = async () => {
+    sp.active = true;
+    let next=null, nextP=null;
+    while(!sp.stop){
+      let item=next, clipP=nextP; next=null; nextP=null;
+      if(!item){
+        item = sp.q.find(i=>!i.taken);
+        if(!item){ if(sp.done) break; await new Promise(r=>setTimeout(r,90)); continue; }
+        item.taken = true; clipP = fetchClip(item.text);
+      }
+      const clip = await clipP;
+      const n2 = sp.q.find(i=>!i.taken);
+      if(n2){ n2.taken=true; next=n2; nextP=fetchClip(n2.text); }
+      if(clip && !sp.stop){
+        if(state!=="speaking") setState("speaking");
+        sp.spoke = true;
+        await playClip(clip);
+      }
+    }
+    sp.active = false; sp._fin(sp.spoke);
+  };
+  sp.end  = () => { sp.done = true; if(!sp.active) sp._fin(sp.spoke); };
+  sp.kill = () => { sp.stop = true; sp.done = true; if(!sp.active) sp._fin(sp.spoke); };
+  return sp;
+}
+
+/* Pull complete sentences out of a growing buffer. The (?=\s) lookahead keeps
+   decimals like "3.5" intact; flush grabs whatever remains at end of stream. */
+function drainSentences(st, flush){
+  const out = [];
+  const re = /[\s\S]*?[.!?…]["')\]]*(?=\s)|[\s\S]*?\n/g;
+  let m, idx = 0;
+  while((m = re.exec(st.buf))){ const s=m[0].trim(); if(s) out.push(s); idx = re.lastIndex; }
+  st.buf = st.buf.slice(idx);
+  if(flush && st.buf.trim()){ out.push(st.buf.trim()); st.buf=""; }
+  return out;
+}
+
+async function send(text){
+  if(!text || busy) return;
+  busy = true;
+  const turnT0 = performance.now();
+  logLine("you",text);
+  setState("thinking");
+  captionAutoScroll = true;
+  caption("");
+  const ctrl = new AbortController(); currentReq = ctrl;
+  const sp = makeSpeaker(); speaker = sp;
+  const st = { buf:"" };
+  let live="", finalReply="", gotError="";
+  try{
+    const r = await fetch("/think_stream",{method:"POST",headers:{"Content-Type":"application/json",...AUTH_HEADERS},
+      body:JSON.stringify({text}), signal:ctrl.signal});
+    if(!r.ok || !r.body) throw new Error("no stream");
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let carry = "";
+    for(;;){
+      const {done, value} = await reader.read();
+      if(done) break;
+      carry += dec.decode(value,{stream:true});
+      let nl;
+      while((nl = carry.indexOf("\n")) >= 0){
+        const lineStr = carry.slice(0,nl); carry = carry.slice(nl+1);
+        if(!lineStr.trim()) continue;
+        let ev; try{ ev = JSON.parse(lineStr); }catch(e){ continue; }
+        if(ev.type==="model") setModel(ev.model);
+        else if(ev.type==="delta"){
+          live += ev.text; st.buf += ev.text;
+          caption(live);   // live subtitles
+          for(const s of drainSentences(st,false)) sp.push(s);
+        }
+        else if(ev.type==="tool") caption("· "+ev.name+" ·");
+        else if(ev.type==="done"){ finalReply = ev.reply || live || "…"; if(ev.model) setModel(ev.model); }
+        else if(ev.type==="error") gotError = ev.message || "brain error";
+      }
+    }
+    for(const s of drainSentences(st,true)) sp.push(s);
+    if(gotError && !live){ finalReply = gotError; sp.push(gotError); }
+    sp.end();
+    logLine("jar", finalReply || live || "…");
+    const spoke = await sp.whenDone;
+    // Server TTS totally failed — browser voice fallback on the final text.
+    if(!spoke && !sp.stop && window.speechSynthesis && (finalReply||live)){
+      setState("speaking");
+      await new Promise(res=>{ endSpeak=res; const u=new SpeechSynthesisUtterance(finalReply||live); u.onend=res; u.onerror=res; speechSynthesis.speak(u); });
+      endSpeak=null;
+    }
+  }catch(e){
+    sp.kill();
+    if(!ctrl.signal.aborted){
+      // stream failed (old bridge / blip) — classic round-trip as a safety net
+      try{ await sendLegacy(text); }
+      catch(_){ flash("bridge unreachable — is the brain running?"); }
+    }
+  }finally{
+    currentReq = null; speaker = null;
+    const el = $("#s-reply"); if(el) el.textContent = ((performance.now()-turnT0)/1000).toFixed(1) + "s";
+    caption("");
+    speakEndedAt = Date.now();
+    if(ambient){ arm(); setState("listening"); } else { setState("standby"); }
+    busy = false;
+    if(ambient && armed){ try{ rec && rec.start(); }catch(e){} }
+  }
+}
+
+/* Classic non-streaming path — kept as the fallback when /think_stream fails. */
+async function sendLegacy(text){
+  const r = await fetch(BRAIN_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json",...AUTH_HEADERS},body:JSON.stringify({text})});
+  const data = await r.json();
+  const txt = data.reply || "…";
+  setModel(data.model);
+  logLine("jar",txt);
+  await reply(txt);
+}
+
+/* Break a reply into speakable chunks. First chunk is a single sentence (fast to
+   synthesize -> audio starts sooner); the rest are grouped to ~220 chars so we don't
+   fire a request per tiny fragment. */
+function speakChunks(text){
+  const clean = (text||"").replace(/\s+/g," ").trim();
+  if(!clean) return [];
+  const sentences = clean.match(/[^.!?…]+[.!?…]+(?=\s|$)|[^.!?…]+$/g) || [clean];
+  const out = []; let buf = "";
+  for(const s of sentences){
+    const piece = s.trim(); if(!piece) continue;
+    if(out.length===0 && !buf){ out.push(piece); continue; }   // first sentence stands alone
+    if((buf+" "+piece).length > 220){ if(buf) out.push(buf); buf = piece; }
+    else { buf = buf ? buf+" "+piece : piece; }
+  }
+  if(buf) out.push(buf);
+  return out;
+}
+
+async function fetchClip(chunk){
+  try{
+    const r = await fetch(SPEAK_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json",...AUTH_HEADERS},body:JSON.stringify({text:chunk})});
+    return (await r.json()).audio_b64 || "";
+  }catch(e){ return ""; }
+}
+
+function playClip(audio_b64){
+  return new Promise(res=>{
+    player.src = "data:audio/mpeg;base64,"+audio_b64;
+    player.volume = 1;
+    endSpeak = ()=>res(true);          // barge-in resolves this to stop cleanly
+    player.onended = ()=>res(true);
+    player.onerror = ()=>res(false);
+    const p = player.play();
+    if(p && p.catch) p.catch(()=>res(false));
+  }).then(ok=>{ endSpeak=null; return ok; });
+}
+
+async function reply(text){
+  setState("speaking");
+  const chunks = speakChunks(text);
+  let spoke = false;
+  // Pipeline: prefetch the next clip's audio while the current one is playing.
+  let pending = chunks.length ? fetchClip(chunks[0]) : null;
+  for(let i=0;i<chunks.length;i++){
+    if(state!=="speaking") break;                // barged in / interrupted
+    const audio_b64 = await pending;
+    pending = (i+1<chunks.length) ? fetchClip(chunks[i+1]) : null;
+    if(audio_b64){
+      const ok = await playClip(audio_b64);
+      if(ok) spoke = true; else break;
+    }
+  }
+  // Nothing played (server TTS down) — fall back to the browser voice.
+  if(!spoke && window.speechSynthesis && text && state==="speaking"){
+    await new Promise(res=>{ endSpeak=res; const u=new SpeechSynthesisUtterance(text); u.onend=res; u.onerror=res; speechSynthesis.speak(u); });
+    endSpeak=null;
+  }
+  speakEndedAt = Date.now();
+  // Hands-free: once I finish speaking, always reopen a listening window so you can reply
+  // without a wake word or an orb tap. The 45s arm timer still lapses to standby on silence,
+  // so it won't sit listening forever if you walk away.
+  if(ambient){ arm(); setState("listening"); } else { setState("standby"); }
+}
+
+$("#text").addEventListener("keydown", e=>{
+  if(e.key==="Enter" && e.target.value.trim()){ const v=e.target.value.trim(); e.target.value=""; ensureCtx(); arm(); send(v); }
+});
+
+/* ---------- ambient blue aura ---------- */
+(function(){
+  const rc = $("#aura"), rx = rc.getContext("2d");
+  let W, H;
+  // Soft-focus gradients don't need full resolution — render the aura at half density
+  // and let the browser upscale. Frees a big slice of GPU time on phones.
+  function sizeAura(){ const d=Math.min(devicePixelRatio||1,2)*0.5; W=innerWidth; H=innerHeight; rc.width=W*d; rc.height=H*d; rx.setTransform(d,0,0,d,0,0); }
+  addEventListener("resize", sizeAura); sizeAura();
+  const blobs = [
+    { ox:0.30, oy:0.40, r:0.18, sp:0.11, ph:0.0, hue:ACCENT_HUE },
+    { ox:0.68, oy:0.55, r:0.16, sp:0.08, ph:1.7, hue:ACCENT_HUE+12 },
+    { ox:0.50, oy:0.28, r:0.22, sp:0.13, ph:3.1, hue:ACCENT_HUE-10 },
+    { ox:0.45, oy:0.72, r:0.20, sp:0.06, ph:4.6, hue:ACCENT_HUE+6 },
+  ];
+  let tt = 0, prevTs = 0;
+  function aura(ts){
+    requestAnimationFrame(aura);
+    const lvl = (typeof level==="number") ? level : 0;
+    const dt = prevTs ? Math.min((ts-prevTs)/1000, 0.05) : 0.016;
+    prevTs = ts;
+    tt += dt*(1 + lvl*1.9);
+    rx.globalCompositeOperation = "source-over";
+    rx.fillStyle = "#020806"; rx.fillRect(0,0,W,H);
+    rx.globalCompositeOperation = "lighter";
+    const min = Math.min(W,H);
+    for(const b of blobs){
+      const cx = (b.ox + Math.cos(tt*b.sp + b.ph)*0.06) * W;
+      const cy = (b.oy + Math.sin(tt*b.sp*0.9 + b.ph)*0.06) * H;
+      const breathe = 0.85 + 0.15*Math.sin(tt*0.7 + b.ph) + lvl*0.6;
+      const Rr = min * b.r * (1.6 + breathe);
+      const a = 0.18 + lvl*0.28;
+      const g = rx.createRadialGradient(cx,cy,0,cx,cy,Rr);
+      g.addColorStop(0,   `hsla(${b.hue},100%,62%,${a})`);
+      g.addColorStop(0.5, `hsla(${b.hue},100%,48%,${a*0.4})`);
+      g.addColorStop(1,   `hsla(${b.hue},100%,42%,0)`);
+      rx.fillStyle = g;
+      rx.beginPath(); rx.ellipse(cx,cy,Rr,Rr*0.8,0,0,Math.PI*2); rx.fill();
+    }
+  }
+  requestAnimationFrame(aura);
+})();
+
+/* ---------- hive health panel ---------- */
+async function loadHive(){
+  try{
+    const d = await (await fetch("/hive")).json();
+    const rows = (d.nodes||[]).map(n=>{
+      const cls = n.up===true ? "up" : (n.up===false ? "down" : "");
+      return `<div class="n"><span class="d ${cls}"></span>${n.name}</div>`;
+    }).join("");
+    if(rows) $("#hive").innerHTML = `<div class="hl">◈ the hive</div>` + rows;
+  }catch(e){}
+}
+loadHive(); setInterval(loadHive, 20000);
+
+/* ---------- system vitals (SYS panel) ----------
+   One cheap /stats poll every 10s (server caches it) + a CPU sparkline drawn only
+   when a new sample lands — zero cost to the animation loop. Link latency is just
+   the measured round-trip of the poll itself, so it's free. */
+const sparkHist = [];
+function drawSpark(){
+  const c = $("#spark"); if(!c) return;
+  const d = Math.min(devicePixelRatio||1,2);
+  const w = c.clientWidth, h = c.clientHeight;
+  if(!w) return;
+  if(c.width !== w*d){ c.width = w*d; c.height = h*d; }
+  const x = c.getContext("2d");
+  x.setTransform(d,0,0,d,0,0); x.clearRect(0,0,w,h);
+  if(sparkHist.length < 2) return;
+  const step = w/(sparkHist.length-1);
+  x.beginPath();
+  sparkHist.forEach((v,i)=> x[i?"lineTo":"moveTo"](i*step, h-2-(h-5)*Math.min(v,1)));
+  x.strokeStyle = "rgba(51,255,153,.85)"; x.lineWidth = 1.2;
+  x.shadowColor = "rgba(51,255,153,.6)"; x.shadowBlur = 4;
+  x.stroke();
+  x.lineTo(w,h); x.lineTo(0,h); x.closePath();
+  x.shadowBlur = 0; x.fillStyle = "rgba(51,255,153,.08)"; x.fill();
+}
+function setBar(id, frac){
+  const b = $(id); if(!b) return;
+  b.classList.toggle("hot", frac > 0.85);
+  b.firstElementChild.style.transform = `scaleX(${Math.max(0.02, Math.min(frac,1))})`;
+}
+const GB = 1024*1024*1024;
+function fmtUp(s){ return s>=3600 ? `${(s/3600)|0}h ${((s%3600)/60)|0}m` : `${(s/60)|0}m`; }
+async function loadStats(){
+  try{
+    const t0 = performance.now();
+    const s = await (await fetch("/stats")).json();
+    const ping = Math.round(performance.now() - t0);
+    $("#s-ping").textContent = ping + " ms";
+    if(s.load1 != null){
+      const frac = s.load1/(s.cores||8);
+      $("#s-cpu").textContent = Math.round(frac*100) + "%";
+      setBar("#b-cpu", frac);
+      sparkHist.push(frac); if(sparkHist.length > 34) sparkHist.shift();
+      drawSpark();
+    }
+    if(s.mem_total){
+      const used = s.mem_total - (s.mem_free||0);
+      $("#s-ram").textContent = (used/GB).toFixed(1) + "/" + Math.round(s.mem_total/GB) + "G";
+      setBar("#b-ram", used/s.mem_total);
+    }
+    if(s.disk_total) $("#s-disk").textContent = Math.round(s.disk_free/GB) + "G free";
+    $("#s-reply").textContent = s.last_reply_sec ? s.last_reply_sec + "s" : "—";
+    $("#s-sess").textContent = s.session_turns ? `${s.session_turns}t · ${s.session_age_min}m` : "fresh";
+    if(s.bridge_uptime_sec) $("#s-up").textContent = fmtUp(s.bridge_uptime_sec);
+    if(s.model) setModel(s.model);
+  }catch(e){}
+}
+loadStats(); setInterval(loadStats, 10000);
+
+/* ---------- model indicator ---------- */
+function setModel(id){
+  const el = $("#model-ind"); if(!el || !id) return;
+  const s = String(id).toLowerCase();
+  let label, cls;
+  if(s.includes("haiku")){ label="HAIKU · fast"; cls="fast"; }
+  else if(s.includes("opus")){ label="OPUS · deep"; cls="heavy"; }
+  else if(s.includes("fable")){ label="FABLE · max"; cls="heavy"; }
+  else if(s.includes("sonnet")){ label="SONNET"; cls="heavy"; }
+  else { label=id; cls=""; }
+  el.textContent = label;
+  el.classList.remove("fast","heavy"); if(cls) el.classList.add(cls);
+}
+
+/* ---------- health / boot ---------- */
+function loadHealth(){
+  fetch("/health").then(r=>r.json()).then(h=>{
+    $("#d-brain").classList.toggle("off",!h.ok);
+    $("#d-voice").classList.toggle("off",!h.voice);
+    const bd = $("#d-brain"); if(bd && h.last_error) bd.title = h.last_error;
+    if(h.model) setModel(h.model);
+  }).catch(()=> $("#d-brain").classList.add("off"));
+}
+loadHealth(); setInterval(loadHealth, 20000);   // keep the dots live, not a one-shot at boot
+setState("standby");
+setWakeBadge();
+if(TV_MODE){
+  // On the television the REMOTE is the mic: the Hive TV app runs Android speech
+  // recognition on OK and hands the text to jarvisSend(). Hide the web mic/typing
+  // controls (no path to them on a TV) — the page still owns the whole turn:
+  // streaming, captions, and speaking the reply through the TV speakers.
+  document.querySelector(".controls").style.display = "none";
+  window.jarvisSend = t => { try{ ensureCtx(); }catch(e){} arm(); send(t); };
+  window.jarvisListening = on => {
+    if(on){ setState("listening"); caption(""); }
+    else if(state === "listening"){ setState("standby"); }
+  };
+  window.jarvisFlash = m => flash(m);
+}else{
+  startAmbient();
+}
+</script>
+</body>
+</html>

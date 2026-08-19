@@ -1,0 +1,27 @@
+{
+  "assistant_name": "JARVIS",
+  "owner_name": "boss",
+  "machine_label": "ops-hub · mac mini m1",
+
+  "wake_regex": "\\bjar+vis\\b",
+
+  "fleet_label": "The Hive",
+  "weather_label": "Upper Manhattan · Weather",
+
+  "timezone": "America/New_York",
+  "weather_lat": 40.7128,
+  "weather_lon": -74.006,
+
+  "tailscale_bin": "/usr/local/bin/tailscale",
+  "self_node": "ops-hub",
+  "nodes": [
+    { "name": "ops-hub", "ip": "100.64.0.1" },
+    { "name": "vps",     "ip": "100.64.0.2" },
+    { "name": "pi",      "ip": "100.64.0.3" }
+  ],
+
+  "watch_service": "",
+  "extra_act_words": ["portainer", "frigate", "jellyfin"],
+
+  "owner_phone": ""
+}

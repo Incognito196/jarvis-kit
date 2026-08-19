@@ -1,0 +1,21 @@
+# Secrets and identity — never commit these.
+.env
+config.json
+telegram_owner.txt
+session.json
+
+# Runtime state
+logs/
+inbox/
+__pycache__/
+*.pyc
+
+# Voice models are hundreds of MB — download them, don't vendor them.
+voices/*.onnx
+voices/*.bin
+voices/*.json
+
+# The soul you actually write is yours and usually private.
+soul.md
+
+.DS_Store

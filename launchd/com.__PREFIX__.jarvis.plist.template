@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.__PREFIX__.jarvis</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PYTHON__</string>
+		<string>__INSTALL_DIR__/bridge.py</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<!-- launchd jobs get a bare PATH. The bridge shells out to the claude CLI,
+		     tailscale, ffmpeg and friends, so spell the search path out here. -->
+		<key>PATH</key>
+		<string>__PATH__</string>
+		<key>JARVIS_VOICE</key>
+		<string>__VOICE__</string>
+		<key>EDGE_VOICE</key>
+		<string>__EDGE_VOICE__</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>__INSTALL_DIR__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- Don't hot-loop if it crashes on boot before the network is up. -->
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>StandardOutPath</key>
+	<string>__INSTALL_DIR__/logs/jarvis.out</string>
+	<key>StandardErrorPath</key>
+	<string>__INSTALL_DIR__/logs/jarvis.err</string>
+</dict>
+</plist>

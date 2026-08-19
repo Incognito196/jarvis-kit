@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HIVE TV</title>
+<style>
+  /* Same Stark palette as the Jarvis face — this is the wall-sized sibling. */
+  :root{
+    --acc:#33ff99; --acc-dim:#0e4a2e; --bg:#020806;
+    --ink:#cfffe0; --ink-2:#7aa98c; --ink-3:#476b57;
+    --hot:#ff5d78; --warn:#eaff5c;
+    --panel:rgba(10,28,20,.55); --line:rgba(51,255,153,.14);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font-family:"SF Mono",ui-monospace,"Roboto Mono",monospace;cursor:none}
+  /* overscan-safe frame: TVs eat the outer ~3-5% */
+  #stage{position:absolute;inset:0;padding:4vh 4vw;display:flex;flex-direction:column;gap:2.2vh}
+
+  .grid-bg{position:fixed;inset:0;opacity:.045;pointer-events:none;
+    background-image:linear-gradient(var(--acc-dim) 1px,transparent 1px),
+      linear-gradient(90deg,var(--acc-dim) 1px,transparent 1px);
+    background-size:64px 64px;
+    mask-image:radial-gradient(circle at 50% 40%,#000 0%,transparent 80%)}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:baseline;gap:2.4vw}
+  #brand{font-size:2.1vh;letter-spacing:.6vh;color:var(--acc);text-transform:uppercase}
+  #brand b{color:var(--ink);font-weight:400}
+  #date{font-size:2.1vh;letter-spacing:.35vh;color:var(--ink-2);text-transform:uppercase;margin-left:auto}
+  #clock{font-size:6.2vh;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.2vh}
+  #clock small{font-size:2.4vh;color:var(--ink-2);letter-spacing:.1vh}
+
+  /* ---------- panels ---------- */
+  main{flex:1;display:grid;grid-template-columns:1.05fr 1.35fr 1fr;gap:2vw;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:1.6vh;
+    padding:2.6vh 2vw;display:flex;flex-direction:column;min-height:0}
+  .panel h2{font-size:1.7vh;letter-spacing:.45vh;color:var(--acc);opacity:.8;
+    text-transform:uppercase;font-weight:400;margin-bottom:2.2vh}
+
+  /* hive nodes */
+  #nodes{display:flex;flex-direction:column;gap:1.4vh;flex:1;justify-content:space-evenly}
+  .node{display:flex;align-items:center;gap:1.2vw;font-size:2.6vh}
+  .node .d{width:1.6vh;height:1.6vh;border-radius:50%;background:var(--ink-3);flex:none}
+  .node.up .d{background:var(--acc);box-shadow:0 0 1.2vh rgba(51,255,153,.7)}
+  .node.down .d{background:var(--hot);box-shadow:0 0 1.2vh rgba(255,93,120,.7)}
+  .node .nm{color:var(--ink);letter-spacing:.15vh}
+  .node .st{margin-left:auto;font-size:1.7vh;letter-spacing:.3vh;color:var(--ink-3);text-transform:uppercase}
+  .node.up .st{color:var(--ink-2)}
+  .node.down .st{color:var(--hot)}
+
+  /* weather */
+  #w-hero{display:flex;align-items:baseline;gap:1.4vw}
+  #w-temp{font-size:11vh;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums}
+  #w-temp sup{font-size:4vh;color:var(--ink-2)}
+  #w-cond{font-size:2.6vh;color:var(--ink-2);text-transform:uppercase;letter-spacing:.3vh}
+  #w-meta{display:flex;gap:2.4vw;margin-top:2.8vh}
+  .kv{display:flex;flex-direction:column;gap:.6vh}
+  .kv .k{font-size:1.6vh;letter-spacing:.3vh;color:var(--ink-3);text-transform:uppercase}
+  .kv .v{font-size:2.8vh;color:var(--ink);font-variant-numeric:tabular-nums}
+  /* linda badge lives under weather */
+  #linda{margin-top:auto;display:flex;align-items:center;gap:1.2vw;border-top:1px solid var(--line);padding-top:2.2vh}
+  #linda .d{width:1.6vh;height:1.6vh;border-radius:50%;background:var(--ink-3)}
+  #linda.up .d{background:var(--acc);box-shadow:0 0 1.2vh rgba(51,255,153,.7)}
+  #linda.down .d{background:var(--hot);box-shadow:0 0 1.2vh rgba(255,93,120,.7)}
+  #linda .nm{font-size:2.3vh;letter-spacing:.2vh}
+  #linda .st{margin-left:auto;font-size:1.7vh;letter-spacing:.3vh;text-transform:uppercase;color:var(--ink-2)}
+  #linda.down .st{color:var(--hot)}
+
+  /* sys vitals */
+  .vital{margin-bottom:2.4vh}
+  .vital .row{display:flex;justify-content:space-between;align-items:baseline;font-size:2vh;margin-bottom:.8vh}
+  .vital .row .k{color:var(--ink-3);text-transform:uppercase;letter-spacing:.3vh;font-size:1.7vh}
+  .vital .row .v{color:var(--ink);font-variant-numeric:tabular-nums}
+  .bar{height:.9vh;background:rgba(51,255,153,.1);border-radius:.45vh;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;border-radius:.45vh;
+    background:linear-gradient(90deg,var(--acc-dim),var(--acc));
+    transition:width 1s cubic-bezier(.22,.9,.24,1)}
+  .bar.hot i{background:linear-gradient(90deg,#7a5a10,var(--warn))}
+  #spark{width:100%;height:6vh;margin-top:1vh;opacity:.9}
+  #sys-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:2vh;
+    display:flex;flex-wrap:wrap;gap:1.6vh 2vw}
+
+  /* footer ticker */
+  footer{display:flex;gap:2.5vw;font-size:1.7vh;letter-spacing:.25vh;color:var(--ink-3);text-transform:uppercase}
+  footer .ok{color:var(--ink-2)}
+  footer #stale{color:var(--hot);display:none}
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div id="stage">
+  <header>
+    <div id="brand">◈ hive <b>tv</b></div>
+    <div id="date">—</div>
+    <div id="clock">--:--<small> --</small></div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>__FLEET_LABEL__</h2>
+      <div id="nodes"></div>
+    </section>
+
+    <section class="panel">
+      <h2>__WEATHER_LABEL__</h2>
+      <div id="w-hero"><div id="w-temp">--<sup>°F</sup></div><div id="w-cond">loading</div></div>
+      <div id="w-meta">
+        <div class="kv"><span class="k">High / Low</span><span class="v" id="w-hilo">--</span></div>
+        <div class="kv"><span class="k">Feels</span><span class="v" id="w-feels">--</span></div>
+        <div class="kv"><span class="k">Wind</span><span class="v" id="w-wind">--</span></div>
+        <div class="kv"><span class="k">Humidity</span><span class="v" id="w-hum">--</span></div>
+      </div>
+      <div id="linda" style="display:none"><span class="d"></span><span class="nm" id="watch-nm">__WATCH_LABEL__</span><span class="st" id="linda-st">checking</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>__MACHINE_LABEL__</h2>
+      <div class="vital"><div class="row"><span class="k">CPU</span><span class="v" id="s-cpu">--</span></div><div class="bar" id="b-cpu"><i></i></div></div>
+      <div class="vital"><div class="row"><span class="k">Memory</span><span class="v" id="s-ram">--</span></div><div class="bar" id="b-ram"><i></i></div></div>
+      <div class="vital"><div class="row"><span class="k">Disk free</span><span class="v" id="s-disk">--</span></div></div>
+      <canvas id="spark"></canvas>
+      <div id="sys-foot">
+        <div class="kv"><span class="k">Bridge up</span><span class="v" id="s-up">--</span></div>
+        <div class="kv"><span class="k">Last reply</span><span class="v" id="s-reply">--</span></div>
+        <div class="kv"><span class="k">Voice</span><span class="v" id="s-voice">--</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>jarvis engine room · mac mini m1</span>
+    <span class="ok" id="f-hint" style="display:none;color:var(--acc)">press OK &rarr; talk to jarvis</span>
+    <span class="ok" id="f-model"></span>
+    <span id="stale">⚠ data stale — bridge unreachable</span>
+    <span style="margin-left:auto" class="ok" id="f-tick">—</span>
+  </footer>
+</div>
+
+<script>
+/* HIVE TV — wall dashboard. Served by the Jarvis bridge at /tv; reads the same
+   open GET endpoints the face uses (/hive, /stats). Designed to run for weeks:
+   every poller catches its own errors and marks the board stale instead of dying. */
+const $ = s => document.querySelector(s);
+
+/* ---------- clock ---------- */
+function tickClock(){
+  const d = new Date();
+  let h = d.getHours(); const ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+  $("#clock").innerHTML = `${h}:${String(d.getMinutes()).padStart(2,"0")}<small> ${String(d.getSeconds()).padStart(2,"0")} ${ap}</small>`;
+  $("#date").textContent = d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---------- staleness: if the bridge stops answering, say so ---------- */
+let lastGood = 0;
+function markGood(){ lastGood = Date.now(); }
+setInterval(()=> $("#stale").style.display = (Date.now()-lastGood > 60000) ? "inline" : "none", 5000);
+
+/* ---------- hive nodes ---------- */
+async function loadHive(){
+  try{
+    const d = await (await fetch("/hive")).json();
+    $("#nodes").innerHTML = (d.nodes||[]).map(n=>{
+      const cls = n.up===true ? "up" : (n.up===false ? "down" : "");
+      const st  = n.up===true ? "online" : (n.up===false ? "down" : "unknown");
+      return `<div class="node ${cls}"><span class="d"></span><span class="nm">${n.name}</span><span class="st">${st}</span></div>`;
+    }).join("");
+    markGood();
+  }catch(e){}
+}
+loadHive(); setInterval(loadHive, 15000);
+
+/* ---------- sys vitals + sparkline ---------- */
+const hist = [];
+function drawSpark(){
+  const c = $("#spark"), w = c.clientWidth, h = c.clientHeight;
+  if(!w || hist.length < 2) return;
+  const d = Math.min(devicePixelRatio||1, 2);
+  if(c.width !== w*d){ c.width = w*d; c.height = h*d; }
+  const x = c.getContext("2d");
+  x.setTransform(d,0,0,d,0,0); x.clearRect(0,0,w,h);
+  const step = w/(hist.length-1);
+  x.beginPath();
+  hist.forEach((v,i)=> x[i?"lineTo":"moveTo"](i*step, h-2-(h-6)*Math.min(v,1)));
+  x.strokeStyle = "rgba(51,255,153,.85)"; x.lineWidth = 2; x.stroke();
+  x.lineTo(w,h); x.lineTo(0,h); x.closePath();
+  x.fillStyle = "rgba(51,255,153,.08)"; x.fill();
+}
+const GB = 1024**3;
+const fmtUp = s => s>=86400 ? `${(s/86400)|0}d ${((s%86400)/3600)|0}h` : s>=3600 ? `${(s/3600)|0}h ${((s%3600)/60)|0}m` : `${(s/60)|0}m`;
+function setBar(id, frac){
+  const b = $(id);
+  b.classList.toggle("hot", frac > .85);
+  b.firstElementChild.style.width = `${Math.max(2, Math.min(frac*100, 100))}%`;
+}
+async function loadStats(){
+  try{
+    const s = await (await fetch("/stats")).json();
+    if(s.load1 != null){
+      const f = s.load1/(s.cores||8);
+      $("#s-cpu").textContent = Math.round(f*100) + "%";
+      setBar("#b-cpu", f);
+      hist.push(f); if(hist.length > 40) hist.shift();
+      drawSpark();
+    }
+    if(s.mem_total){
+      const used = s.mem_total - (s.mem_free||0);
+      $("#s-ram").textContent = `${(used/GB).toFixed(1)} / ${Math.round(s.mem_total/GB)} GB`;
+      setBar("#b-ram", used/s.mem_total);
+    }
+    if(s.disk_total) $("#s-disk").textContent = `${Math.round(s.disk_free/GB)} GB`;
+    if(s.bridge_uptime_sec != null) $("#s-up").textContent = fmtUp(s.bridge_uptime_sec);
+    $("#s-reply").textContent = s.last_reply_sec ? s.last_reply_sec + "s" : "—";
+    if(s.voice) $("#s-voice").textContent = s.voice;
+    $("#f-model").textContent = s.model ? "brain: " + s.model.replace(/^claude-/,"").replace(/-\d{8}$/,"") : "";
+    const l = $("#linda");
+    if(s.watch_up !== undefined){
+      l.style.display = "";
+      l.classList.toggle("up", !!s.watch_up);
+      l.classList.toggle("down", !s.watch_up);
+      $("#linda-st").textContent = s.watch_up ? "running" : "DOWN";
+    }
+    markGood();
+  }catch(e){}
+}
+loadStats(); setInterval(loadStats, 15000);
+
+/* ---------- weather (open-meteo, free, no key) — Inwood, NYC ---------- */
+const WMO = {0:"clear",1:"mostly clear",2:"partly cloudy",3:"overcast",45:"fog",48:"fog",
+  51:"drizzle",53:"drizzle",55:"drizzle",61:"light rain",63:"rain",65:"heavy rain",
+  66:"freezing rain",67:"freezing rain",71:"light snow",73:"snow",75:"heavy snow",
+  77:"snow",80:"showers",81:"showers",82:"heavy showers",85:"snow showers",
+  86:"snow showers",95:"thunderstorm",96:"thunderstorm",99:"thunderstorm"};
+async function loadWeather(){
+  try{
+    const u = "https://api.open-meteo.com/v1/forecast?latitude=__WEATHER_LAT__&longitude=__WEATHER_LON__"
+      + "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
+      + "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1"
+      + "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=" + encodeURIComponent("__WEATHER_TZ__");
+    const w = await (await fetch(u)).json();
+    const c = w.current || {};
+    $("#w-temp").innerHTML = `${Math.round(c.temperature_2m)}<sup>°F</sup>`;
+    $("#w-cond").textContent = WMO[c.weather_code] || "—";
+    $("#w-feels").textContent = `${Math.round(c.apparent_temperature)}°`;
+    $("#w-wind").textContent = `${Math.round(c.wind_speed_10m)} mph`;
+    $("#w-hum").textContent = `${c.relative_humidity_2m}%`;
+    const d = w.daily || {};
+    if(d.temperature_2m_max) $("#w-hilo").textContent =
+      `${Math.round(d.temperature_2m_max[0])}° / ${Math.round(d.temperature_2m_min[0])}°`;
+  }catch(e){ $("#w-cond").textContent = "weather offline"; }
+}
+loadWeather(); setInterval(loadWeather, 15*60*1000);
+
+/* on the actual TV (app appends ?tv=1) say what the remote's OK button does */
+if(new URLSearchParams(location.search).has("tv")) $("#f-hint").style.display = "inline";
+
+/* footer heartbeat so a frozen WebView is visibly frozen */
+setInterval(()=> $("#f-tick").textContent = new Date().toLocaleTimeString("en-US"), 1000);
+</script>
+</body>
+</html>
