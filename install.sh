@@ -1,222 +1,162 @@
-#!/bin/bash
-# JARVIS installer. Interactive, idempotent, and it never overwrites your answers:
-# run it again after an upgrade and it keeps your existing config.json / .env / soul.md.
+#!/usr/bin/env bash
+# Jarvis core installer. Sets up .env, writes your soul file, installs the background
+# service, starts it, and tells you where to point a browser.
 #
-#   ./install.sh            interactive setup + load the launchd jobs
-#   ./install.sh --no-start configure everything but don't load anything
+#   ./install.sh              interactive
+#   ./install.sh --yes        accept every default, ask nothing
 #
+# Safe to re-run: it never overwrites an existing .env or soul/SOUL.md without asking.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HERE"
-NO_START=0
-[[ "${1:-}" == "--no-start" ]] && NO_START=1
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LABEL="com.jarvis.core"
+SERVICE="jarvis-core"
+ASSUME_YES=0
+[[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]] && ASSUME_YES=1
 
-bold(){ printf "\033[1m%s\033[0m\n" "$*"; }
-ok(){   printf "  \033[32m✓\033[0m %s\n" "$*"; }
-warn(){ printf "  \033[33m!\033[0m %s\n" "$*"; }
-die(){  printf "  \033[31m✗\033[0m %s\n" "$*" >&2; exit 1; }
+bold(){ printf '\033[1m%s\033[0m\n' "$1"; }
+ok(){   printf '  \033[32m✓\033[0m %s\n' "$1"; }
+warn(){ printf '  \033[33m!\033[0m %s\n' "$1"; }
+die(){  printf '  \033[31m✗\033[0m %s\n' "$1"; exit 1; }
 
-# ask VAR "Prompt" "default"  — keeps the default on an empty answer
-ask(){ local __v=$1 __p=$2 __d=${3:-} __r
-       read -r -p "  $__p${__d:+ [$__d]}: " __r </dev/tty || true
-       printf -v "$__v" '%s' "${__r:-$__d}"; }
+ask(){ # ask <prompt> <default>
+  local prompt="$1" def="$2" reply
+  if [[ $ASSUME_YES == 1 ]]; then echo "$def"; return; fi
+  read -r -p "$prompt [$def]: " reply </dev/tty || reply=""
+  echo "${reply:-$def}"
+}
 
-bold "JARVIS — install"
+bold "Jarvis core — install"
 echo
 
-# ---------- 1. prerequisites -------------------------------------------------
-bold "1. Checking prerequisites"
-[[ "$(uname)" == "Darwin" ]] || warn "Not macOS. The bridge and voice mostly work; launchd + iMessage do not."
-
+# ---- 1. dependencies -------------------------------------------------------
 PYTHON="$(command -v python3 || true)"
-[[ -n "$PYTHON" ]] || die "python3 not found. Install it (brew install python) and re-run."
+[[ -n "$PYTHON" ]] || die "python3 not found. Install Python 3.9 or newer."
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' \
-  || die "python3 is $("$PYTHON" -V) — need 3.9+."
-ok "python3: $PYTHON ($("$PYTHON" -V 2>&1))"
+  || die "python3 is too old ($($PYTHON -V)). Need 3.9+."
+ok "python3 $("$PYTHON" -V | cut -d' ' -f2) at $PYTHON"
 
-# The brain. Everything else is decoration without it.
-CLAUDE_BIN="$(command -v claude || true)"
-[[ -z "$CLAUDE_BIN" && -x "$HOME/.local/bin/claude" ]] && CLAUDE_BIN="$HOME/.local/bin/claude"
-if [[ -n "$CLAUDE_BIN" ]]; then
-  ok "claude CLI: $CLAUDE_BIN"
+CLAUDE="$(command -v claude || true)"
+if [[ -z "$CLAUDE" ]]; then
+  warn "claude CLI not on PATH."
+  echo "     Jarvis has no brain without it: https://claude.com/claude-code"
+  CLAUDE="$(ask '     Path to the claude binary (blank to set later)' '')"
+fi
+[[ -n "$CLAUDE" ]] && ok "claude CLI at $CLAUDE"
+
+if "$PYTHON" -m edge_tts --help >/dev/null 2>&1; then
+  ok "edge-tts installed (free neural voice)"
 else
-  warn "claude CLI not found. Install it (https://claude.com/claude-code) — the bridge needs it to think."
-  ask CLAUDE_BIN "Path to the claude binary (or leave blank to fix later)" ""
-fi
-
-TAILSCALE_BIN="$(command -v tailscale || true)"
-[[ -z "$TAILSCALE_BIN" && -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]] \
-  && TAILSCALE_BIN=/Applications/Tailscale.app/Contents/MacOS/Tailscale
-if [[ -n "$TAILSCALE_BIN" ]]; then ok "tailscale: $TAILSCALE_BIN"
-else warn "tailscale not found — the fleet panel will just sit empty. That's fine."; TAILSCALE_BIN="/usr/local/bin/tailscale"; fi
-echo
-
-# ---------- 2. identity ------------------------------------------------------
-bold "2. Who is this?"
-if [[ -f config.json ]]; then
-  ok "config.json already exists — keeping it. Delete it and re-run to start over."
-else
-  ask ASSISTANT_NAME "Assistant name (one word, also the wake word)" "JARVIS"
-  ask OWNER_NAME     "What should it call you"                        "boss"
-  ask MACHINE_LABEL  "Label for this machine (shown on the face)"     "$(scutil --get ComputerName 2>/dev/null || hostname)"
-  ask SELF_NODE      "This machine's name in your fleet list"         "$(hostname -s)"
-  ask TIMEZONE       "Timezone"                                        "$(readlink /etc/localtime 2>/dev/null | sed 's|.*zoneinfo/||' || echo America/New_York)"
-  ask WLAT           "Weather latitude"                                "40.7128"
-  ask WLON           "Weather longitude"                               "-74.006"
-  ask OWNER_PHONE    "Your phone in E.164 for the iMessage bridge (blank to skip)" ""
-
-  # Fuzzy wake pattern: speech recognition doubles letters constantly, so we accept
-  # repeats of each letter. "jarvis" -> \bj+a+r+v+i+s+\b, which also catches "jarrvis".
-  WAKE_LOWER="$(printf '%s' "$ASSISTANT_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
-  WAKE_BODY="$("$PYTHON" -c 'import sys; print("".join(c+"+" for c in sys.argv[1]))' "$WAKE_LOWER")"
-  WAKE_REGEX="\\\\b${WAKE_BODY}\\\\b"
-
-  ASSISTANT_NAME="$ASSISTANT_NAME" OWNER_NAME="$OWNER_NAME" MACHINE_LABEL="$MACHINE_LABEL" \
-  SELF_NODE="$SELF_NODE" TIMEZONE="$TIMEZONE" WLAT="$WLAT" WLON="$WLON" \
-  OWNER_PHONE="$OWNER_PHONE" TAILSCALE_BIN="$TAILSCALE_BIN" WAKE_REGEX="$WAKE_REGEX" \
-  "$PYTHON" - <<'PYEOF'
-import json, os
-cfg = {
-    "assistant_name": os.environ["ASSISTANT_NAME"],
-    "owner_name":     os.environ["OWNER_NAME"],
-    "machine_label":  os.environ["MACHINE_LABEL"],
-    "wake_regex":     os.environ["WAKE_REGEX"].replace("\\\\", "\\"),
-    "timezone":       os.environ["TIMEZONE"],
-    "weather_lat":    float(os.environ["WLAT"] or 40.7128),
-    "weather_lon":    float(os.environ["WLON"] or -74.006),
-    "tailscale_bin":  os.environ["TAILSCALE_BIN"],
-    "self_node":      os.environ["SELF_NODE"],
-    "nodes":          [{"name": os.environ["SELF_NODE"], "ip": ""}],
-    "watch_service":  "",
-    "extra_act_words": [],
-    "owner_phone":    os.environ["OWNER_PHONE"],
-}
-with open("config.json", "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-PYEOF
-  ok "wrote config.json"
-  warn "Add your other machines to the \"nodes\" list in config.json to light up the fleet panel."
-fi
-echo
-
-# ---------- 3. secrets -------------------------------------------------------
-bold "3. Secrets"
-if [[ -f .env ]]; then
-  ok ".env already exists — keeping it."
-else
-  cp .env.example .env
-  # The bridge auto-generates a token on first boot, but doing it here means the
-  # Telegram/iMessage bridges can read the same one even if they start first.
-  TOKEN="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-  "$PYTHON" - "$TOKEN" <<'PYEOF'
-import sys
-tok = sys.argv[1]
-s = open(".env").read().replace("JARVIS_TOKEN=\n", f"JARVIS_TOKEN={tok}\n", 1)
-open(".env", "w").write(s)
-PYEOF
-  ok "wrote .env with a fresh JARVIS_TOKEN"
-fi
-chmod 600 .env
-ok ".env is chmod 600"
-
-ask TG_TOKEN "Telegram bot token from @BotFather (blank to skip Telegram)" ""
-if [[ -n "$TG_TOKEN" ]]; then
-  "$PYTHON" - "$TG_TOKEN" <<'PYEOF'
-import re, sys
-tok = sys.argv[1]
-s = open(".env").read()
-s = re.sub(r"(?m)^TELEGRAM_BOT_TOKEN=.*$", f"TELEGRAM_BOT_TOKEN={tok}", s)
-open(".env", "w").write(s)
-PYEOF
-  ok "Telegram token saved"
-fi
-echo
-
-# ---------- 4. soul ----------------------------------------------------------
-bold "4. Soul"
-if [[ -f soul.md ]]; then
-  ok "soul.md already exists — keeping it."
-else
-  ASSIST="$("$PYTHON" -c 'import json;print(json.load(open("config.json"))["assistant_name"])')"
-  OWNR="$("$PYTHON"   -c 'import json;print(json.load(open("config.json"))["owner_name"])')"
-  MACH="$("$PYTHON"   -c 'import json;print(json.load(open("config.json"))["machine_label"])')"
-  PREFIX_GUESS="$(id -un)"
-  sed -e "s|{{ASSISTANT_NAME}}|$ASSIST|g" \
-      -e "s|{{OWNER_NAME}}|$OWNR|g" \
-      -e "s|{{MACHINE_NAME}}|$MACH|g" \
-      -e "s|{{INSTALL_DIR}}|$HERE|g" \
-      -e "s|{{LAUNCHD_LABEL}}|com.$PREFIX_GUESS.jarvis|g" \
-      -e "s|{{VOICE}}|edge|g" \
-      -e "s|{{TONE}}|Calm, capable, a little wry — a competent right hand, not a hype machine.|g" \
-      soul.template.md > soul.md
-  ok "wrote soul.md from the template — EDIT IT. It's what makes this yours."
-fi
-echo
-
-# ---------- 5. voice ---------------------------------------------------------
-bold "5. Voice"
-if "$PYTHON" -c 'import edge_tts' 2>/dev/null; then
-  ok "edge-tts installed (free Microsoft neural voices)"
-else
-  warn "edge-tts not installed — falling back to the macOS 'say' voice."
-  echo "     Install the good voice with:  $PYTHON -m pip install --user edge-tts"
-fi
-command -v ffmpeg >/dev/null && ok "ffmpeg present" || warn "ffmpeg missing (brew install ffmpeg) — some voice engines need it."
-echo
-
-# ---------- 6. launchd -------------------------------------------------------
-bold "6. Services"
-mkdir -p logs inbox
-ask PREFIX "launchd label prefix (jobs become com.PREFIX.jarvis)" "$(id -un)"
-LA="$HOME/Library/LaunchAgents"
-mkdir -p "$LA"
-SHELL_PATH="$(dirname "${CLAUDE_BIN:-/usr/bin/true}"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-install_job(){
-  local name=$1 tmpl="launchd/com.__PREFIX__.$1.plist.template" dest="$LA/com.$PREFIX.$1.plist"
-  sed -e "s|__PREFIX__|$PREFIX|g" \
-      -e "s|__PYTHON__|$PYTHON|g" \
-      -e "s|__INSTALL_DIR__|$HERE|g" \
-      -e "s|__HOME__|$HOME|g" \
-      -e "s|__PATH__|$SHELL_PATH|g" \
-      -e "s|__VOICE__|edge|g" \
-      -e "s|__EDGE_VOICE__|en-US-AndrewMultilingualNeural|g" \
-      "$tmpl" > "$dest"
-  plutil -lint "$dest" >/dev/null || die "generated a malformed plist: $dest"
-  ok "wrote $dest"
-  if [[ $NO_START -eq 0 ]]; then
-    # bootout first so re-running the installer reloads cleanly instead of erroring.
-    launchctl bootout "gui/$(id -u)/com.$PREFIX.$1" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$dest" && ok "loaded com.$PREFIX.$1"
+  if [[ "$(ask 'Install edge-tts for the voice? (y/n)' 'y')" == "y" ]]; then
+    "$PYTHON" -m pip install --quiet --user edge-tts 2>/dev/null \
+      || "$PYTHON" -m pip install --quiet --break-system-packages edge-tts 2>/dev/null \
+      || warn "pip install edge-tts failed — Jarvis will fall back to the browser voice"
+    "$PYTHON" -m edge_tts --help >/dev/null 2>&1 && ok "edge-tts installed"
+  else
+    warn "no edge-tts: the face will use the browser's own voice"
   fi
-}
-
-install_job jarvis
-[[ -n "$TG_TOKEN" || -n "$(grep -m1 '^TELEGRAM_BOT_TOKEN=.\+' .env || true)" ]] && install_job jarvis-telegram
-OWNER_PHONE_SET="$("$PYTHON" -c 'import json;print(json.load(open("config.json")).get("owner_phone",""))')"
-if [[ -n "$OWNER_PHONE_SET" ]]; then
-  install_job jarvis-imessage
-  warn "iMessage needs Full Disk Access for $PYTHON:"
-  warn "  System Settings → Privacy & Security → Full Disk Access → add that binary."
 fi
+command -v ffmpeg >/dev/null 2>&1 && ok "ffmpeg present" \
+  || warn "no ffmpeg (only needed for the say/piper/kokoro voices)"
 echo
 
-# ---------- done -------------------------------------------------------------
-PORT="$(grep -m1 '^JARVIS_PORT=' .env | cut -d= -f2 || true)"; PORT="${PORT:-8722}"
-bold "Done."
-echo
-echo "  Face:       http://localhost:$PORT/"
-echo "  Dashboard:  http://localhost:$PORT/dashboard"
-echo "  Health:     curl -s http://localhost:$PORT/health"
-echo
-echo "  Next, in order:"
-echo "    1. Edit soul.md — it's the difference between a toy and an assistant."
-echo "    2. Add your machines to \"nodes\" in config.json."
-echo "    3. Open the face in Chrome (mic needs localhost or https) and say the wake word."
-if [[ -n "$TG_TOKEN" ]]; then
-echo "    4. DM your Telegram bot NOW — the first chat to message it becomes the owner."
+# ---- 2. identity + .env ----------------------------------------------------
+if [[ -f "$ROOT/.env" ]]; then
+  ok ".env already exists — leaving it alone"
+else
+  NAME="$(ask 'What should it be called?' 'Jarvis')"
+  OWNER="$(ask 'What should it call you? (blank for nothing)' '')"
+  PORT="$(ask 'Port' '8722')"
+  VOICE="$(ask 'Voice engine (edge/say/kokoro/piper/browser)' 'edge')"
+  TOKEN="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+  sed -e "s|^JARVIS_NAME=.*|JARVIS_NAME=$NAME|" \
+      -e "s|^JARVIS_OWNER=.*|JARVIS_OWNER=$OWNER|" \
+      -e "s|^JARVIS_PORT=.*|JARVIS_PORT=$PORT|" \
+      -e "s|^JARVIS_VOICE=.*|JARVIS_VOICE=$VOICE|" \
+      "$ROOT/.env.example" > "$ROOT/.env"
+  {
+    echo ""
+    echo "JARVIS_TOKEN=$TOKEN"
+    [[ -n "$CLAUDE" ]] && echo "CLAUDE_BIN=$CLAUDE"
+  } >> "$ROOT/.env"
+  chmod 600 "$ROOT/.env"
+  ok "wrote .env (0600) with a fresh action token"
 fi
+
+# read back whatever is authoritative now
+NAME="$(grep -E '^JARVIS_NAME=' "$ROOT/.env" | cut -d= -f2- || echo Jarvis)"
+PORT="$(grep -E '^JARVIS_PORT=' "$ROOT/.env" | cut -d= -f2- || echo 8722)"
+NAME="${NAME:-Jarvis}"; PORT="${PORT:-8722}"
+
+# ---- 3. the soul -----------------------------------------------------------
+if [[ -f "$ROOT/soul/SOUL.md" ]]; then
+  ok "soul/SOUL.md already exists — leaving it alone"
+else
+  TONE="$(ask 'Describe its personality in one line' 'Calm, capable, a little wry. A competent right hand, not a hype machine.')"
+  sed -e "s|{{NAME}}|$NAME|g" \
+      -e "s|{{HOST}}|$(hostname -s)|g" \
+      -e "s|{{ROOT}}|$ROOT|g" \
+      -e "s|{{TONE}}|$TONE|g" \
+      "$ROOT/soul/SOUL.template.md" > "$ROOT/soul/SOUL.md"
+  ok "wrote soul/SOUL.md — edit it any time, no restart needed"
+fi
+mkdir -p "$ROOT/logs"
+
+# ---- 4. the service --------------------------------------------------------
 echo
-echo "  Restart after a change:  launchctl kickstart -k gui/$(id -u)/com.$PREFIX.jarvis"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+  mkdir -p "$(dirname "$PLIST")"
+  sed -e "s|__LABEL__|$LABEL|g" -e "s|__PYTHON__|$PYTHON|g" \
+      -e "s|__ROOT__|$ROOT|g" -e "s|__HOME__|$HOME|g" \
+      -e "s|__PATH__|$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|g" \
+      "$ROOT/packaging/launchd.plist.template" > "$PLIST"
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  ok "launchd agent installed and started ($LABEL)"
+  RESTART="launchctl kickstart -k gui/$(id -u)/$LABEL"
+else
+  UNIT="$HOME/.config/systemd/user/$SERVICE.service"
+  mkdir -p "$(dirname "$UNIT")"
+  sed -e "s|__PYTHON__|$PYTHON|g" -e "s|__ROOT__|$ROOT|g" \
+      -e "s|__PATH__|$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|g" \
+      "$ROOT/packaging/systemd.service.template" > "$UNIT"
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$SERVICE"
+  # Without this, the service dies the moment you log out of your SSH session.
+  loginctl enable-linger "$USER" 2>/dev/null || warn "could not enable linger — it will stop when you log out"
+  ok "systemd user service installed and started ($SERVICE)"
+  RESTART="systemctl --user restart $SERVICE"
+fi
+
+# ---- 5. did it actually come up? -------------------------------------------
+echo
+printf '  waiting for the bridge'
+UP=0
+for _ in $(seq 1 20); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then UP=1; break; fi
+  printf '.'; sleep 0.5
+done
+echo
+if [[ $UP == 1 ]]; then
+  ok "$NAME is up at http://127.0.0.1:$PORT"
+else
+  warn "nothing answered on port $PORT yet"
+  echo "     check: tail -20 $ROOT/logs/bridge.err"
+fi
+
+echo
+bold "Next"
+cat <<EOF
+  Open            http://127.0.0.1:$PORT   (tap the mic, or just type)
+  Check it        ./jarvisctl doctor
+  See its skills  ./jarvisctl agents
+  Teach it one    ./jarvisctl new my-skill --private
+  Its character   edit soul/SOUL.md  (no restart needed)
+  After changes   $RESTART
+
+  To reach it from your phone, put it behind a private tunnel — Tailscale Serve or
+  Cloudflare Tunnel. Do not bind it to 0.0.0.0: anything that can reach the port and
+  holds the token can run commands on this machine.
+EOF

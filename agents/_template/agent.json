@@ -1,0 +1,11 @@
+{
+  "name": "myagent",
+  "title": "My agent",
+  "description": "One sentence on what this teaches Jarvis to do.",
+  "version": "0.1.0",
+  "enabled": true,
+  "act_words": [],
+  "config": {
+    "example_setting": "change me"
+  }
+}

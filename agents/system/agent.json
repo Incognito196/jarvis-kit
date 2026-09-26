@@ -1,0 +1,10 @@
+{
+  "name": "system",
+  "title": "This machine",
+  "description": "CPU, memory, disk and uptime for the computer Jarvis runs on.",
+  "version": "1.0.0",
+  "enabled": true,
+  "config": {
+    "disk_path": "/"
+  }
+}

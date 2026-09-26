@@ -1,21 +1,17 @@
-# Secrets and identity — never commit these.
+# secrets and per-machine state
 .env
-config.json
-telegram_owner.txt
 session.json
-
-# Runtime state
 logs/
-inbox/
+
+# your soul is yours — the template is what ships
+soul/SOUL.md
+
+# voice models are big binaries
+voices/
+
+# python noise
 __pycache__/
 *.pyc
 
-# Voice models are hundreds of MB — download them, don't vendor them.
-voices/*.onnx
-voices/*.bin
-voices/*.json
-
-# The soul you actually write is yours and usually private.
-soul.md
-
+# macOS noise
 .DS_Store

@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""
+jarvisctl — manage this Jarvis: its agents, its service, its logs.
+
+    ./jarvisctl status                 is it up, what model, what voice, last error
+    ./jarvisctl agents                 everything installed, on or off, with load errors
+    ./jarvisctl enable  <name>         switch an agent on  (takes effect on restart)
+    ./jarvisctl disable <name>         switch an agent off
+    ./jarvisctl new <name> [--private] scaffold an agent from agents/_template
+    ./jarvisctl soul                   print the exact system prompt the brain receives
+    ./jarvisctl doctor                 check the things that break installs
+    ./jarvisctl start | stop | restart manage the background service
+    ./jarvisctl logs [n]               last n lines of the action log
+    ./jarvisctl token                  print the action token (treat it as a password)
+
+enable/disable write ~/.jarvis/agents.json, never the repo — so `git pull` can never
+clobber how you have this machine set up.
+"""
+
+import json, os, shutil, subprocess, sys, urllib.request, urllib.error
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import agents as agent_manager                                    # noqa: E402
+
+IS_MAC = sys.platform == "darwin"
+LABEL = "com.jarvis.core"
+SERVICE = "jarvis-core"
+
+
+def env():
+    """Read .env without importing the bridge (which would bind the port)."""
+    out = {}
+    p = os.path.join(HERE, ".env")
+    if os.path.exists(p):
+        for line in open(p, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+E = env()
+PORT = E.get("JARVIS_PORT", "8722")
+BASE = f"http://127.0.0.1:{PORT}"
+
+
+def get(path):
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=5) as r:
+            return json.load(r)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def c(text, colour):
+    codes = {"g": 32, "r": 31, "y": 33, "dim": 90, "b": 36}
+    return f"\033[{codes[colour]}m{text}\033[0m" if sys.stdout.isatty() else text
+
+
+# ---- commands ---------------------------------------------------------------
+def cmd_status(args):
+    h = get("/health")
+    if not h:
+        print(c("down", "r") + f" — nothing answering on {BASE}")
+        print("       start it with: ./jarvisctl start")
+        return 1
+    print(f"{c('up', 'g')} — {h.get('name','Jarvis')} on {BASE}")
+    print(f"  model    {h.get('model') or '(none yet this session)'}")
+    print(f"  voice    {h.get('voice')}")
+    print(f"  session  {'live, ' + str(h.get('turns', 0)) + ' turns' if h.get('session') else 'fresh'}")
+    up = h.get("uptime_sec", 0)
+    print(f"  uptime   {up // 3600}h {(up % 3600) // 60}m")
+    if h.get("last_elapsed"):
+        print(f"  last turn {h['last_elapsed']}s")
+    if h.get("last_error"):
+        print(f"  {c('last error', 'y')}  {h['last_error']} ({h.get('last_error_age_sec')}s ago)")
+    return 0
+
+
+def cmd_agents(args):
+    live = get("/agents")
+    listing = live["agents"] if live else agent_manager.listing() or agent_manager.load(HERE) and agent_manager.listing()
+    if not listing:
+        print("No agents installed. Scaffold one: ./jarvisctl new myagent")
+        return 0
+    if not live:
+        print(c("(bridge is down — reading straight from disk)", "dim"))
+    width = max(len(a["name"]) for a in listing)
+    for a in listing:
+        mark = c("on ", "g") if a["enabled"] else c("off", "dim")
+        tags = []
+        if a["private"]:
+            tags.append("private")
+        if a["panel"]:
+            tags.append("panel")
+        if a["routes"]:
+            tags.append("routes:" + ",".join(a["routes"]))
+        print(f"  {mark}  {a['name'].ljust(width)}  {a['description'] or a['title']}")
+        if tags:
+            print(f"       {c(' · '.join(tags), 'dim')}")
+        if a["error"]:
+            print(f"       {c('error: ' + a['error'], 'r')}")
+    print(c("\nChanges take effect on restart: ./jarvisctl restart", "dim"))
+    return 0
+
+
+def _known_names():
+    agent_manager.load(HERE)
+    return {a["name"] for a in agent_manager.listing()}
+
+
+def cmd_enable(args, on=True):
+    if not args:
+        print("usage: ./jarvisctl " + ("enable" if on else "disable") + " <name>")
+        return 1
+    name = args[0]
+    if name not in _known_names():
+        print(f"No agent called '{name}'. Installed: {', '.join(sorted(_known_names())) or 'none'}")
+        return 1
+    agent_manager.set_enabled(name, on)
+    print(f"{name} {c('enabled' if on else 'disabled', 'g' if on else 'y')} "
+          f"in {agent_manager.USER_CONFIG}")
+    print(c("restart to apply: ./jarvisctl restart", "dim"))
+    return 0
+
+
+def cmd_new(args):
+    if not args:
+        print("usage: ./jarvisctl new <name> [--private]")
+        return 1
+    name = args[0].strip().lower().replace(" ", "-")
+    private = "--private" in args
+    root = agent_manager.USER_AGENTS if private else os.path.join(HERE, "agents")
+    dest = os.path.join(root, name)
+    if os.path.exists(dest):
+        print(f"{dest} already exists.")
+        return 1
+    src = os.path.join(HERE, "agents", "_template")
+    os.makedirs(root, exist_ok=True)
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    man_path = os.path.join(dest, "agent.json")
+    man = json.load(open(man_path, encoding="utf-8"))
+    man["name"] = name
+    man["title"] = name.replace("-", " ").title()
+    man["description"] = "TODO: one sentence on what this teaches Jarvis to do."
+    with open(man_path, "w", encoding="utf-8") as fh:
+        json.dump(man, fh, indent=2)
+        fh.write("\n")
+    print(f"Created {dest}")
+    print(f"  1. say what it does      {os.path.join(dest, 'soul.md')}")
+    print(f"  2. write the code        {os.path.join(dest, 'agent.py')}")
+    print(f"  3. ./jarvisctl restart")
+    if private:
+        print(c("  (private: outside the repo, so it never gets committed)", "dim"))
+    return 0
+
+
+def cmd_soul(args):
+    agent_manager.load(HERE)
+    soul_file = E.get("JARVIS_SOUL", os.path.join(HERE, "soul", "SOUL.md"))
+    base = open(soul_file, encoding="utf-8").read() if os.path.exists(soul_file) else ""
+    if not base:
+        print(c(f"(no soul file at {soul_file})", "y"))
+    block = agent_manager.soul_block()
+    print((base + ("\n\n" + block if block else "")).strip())
+    return 0
+
+
+def cmd_doctor(args):
+    ok = True
+
+    def check(label, good, detail=""):
+        nonlocal ok
+        print(f"  {c('✓', 'g') if good else c('✗', 'r')} {label}" + (f"  {c(detail, 'dim')}" if detail else ""))
+        ok = ok and good
+
+    print("Checking this install:")
+    claude = E.get("CLAUDE_BIN") or shutil.which("claude")
+    check("claude CLI", bool(claude and os.path.exists(os.path.expanduser(claude or ""))),
+          claude or "not found — install Claude Code, or set CLAUDE_BIN in .env")
+    check("python3", sys.version_info >= (3, 9), sys.version.split()[0])
+    try:
+        subprocess.run([sys.executable, "-m", "edge_tts", "--help"], capture_output=True, timeout=20, check=True)
+        check("edge-tts (voice)", True, "installed")
+    except Exception:
+        check("edge-tts (voice)", False, f"{sys.executable} -m pip install edge-tts")
+    check("ffmpeg (only needed for say/piper/kokoro voices)", bool(shutil.which("ffmpeg")),
+          shutil.which("ffmpeg") or "brew install ffmpeg / apt install ffmpeg")
+    check(".env exists", os.path.exists(os.path.join(HERE, ".env")), "cp .env.example .env")
+    check("action token set", bool(E.get("JARVIS_TOKEN")), "the bridge writes one on first boot")
+    soul_file = E.get("JARVIS_SOUL", os.path.join(HERE, "soul", "SOUL.md"))
+    check("soul file", os.path.exists(soul_file), soul_file)
+    agent_manager.load(HERE)
+    broken = [a for a in agent_manager.listing() if a["error"]]
+    check("agents load cleanly", not broken,
+          "; ".join(f"{a['name']}: {a['error']}" for a in broken) or f"{len(agent_manager.listing())} found")
+    h = get("/health")
+    check("bridge responding", bool(h), BASE if h else "not running — ./jarvisctl start")
+    print("\n" + (c("Looks good.", "g") if ok else c("Fix the ✗ lines above.", "y")))
+    return 0 if ok else 1
+
+
+def _service(action):
+    if IS_MAC:
+        uid = os.getuid()
+        if action == "restart":
+            # One atomic command: the job stays loaded, so launchd brings it right back.
+            # bootout + bootstrap would leave you with nothing if the second half failed.
+            return subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/{LABEL}"]).returncode
+        if action == "start":
+            return subprocess.run(["launchctl", "kickstart", f"gui/{uid}/{LABEL}"]).returncode
+        return subprocess.run(["launchctl", "kill", "SIGTERM", f"gui/{uid}/{LABEL}"]).returncode
+    return subprocess.run(["systemctl", "--user", action, SERVICE]).returncode
+
+
+def cmd_service(args, action):
+    rc = _service(action)
+    if rc != 0:
+        print(c(f"{action} failed (rc={rc}). Is the service installed? Run ./install.sh", "r"))
+        return rc
+    print(f"{action} sent.")
+    return 0
+
+
+def cmd_logs(args):
+    n = int(args[0]) if args and args[0].isdigit() else 40
+    path = os.path.join(HERE, "logs", "actions.log")
+    if not os.path.exists(path):
+        print(f"No log yet at {path}")
+        return 1
+    lines = open(path, encoding="utf-8", errors="replace").readlines()[-n:]
+    sys.stdout.writelines(lines)
+    return 0
+
+
+def cmd_token(args):
+    tok = E.get("JARVIS_TOKEN")
+    print(tok or "(no token in .env yet — the bridge writes one on first boot)")
+    return 0
+
+
+COMMANDS = {
+    "status": cmd_status, "agents": cmd_agents, "list": cmd_agents,
+    "enable": lambda a: cmd_enable(a, True), "disable": lambda a: cmd_enable(a, False),
+    "new": cmd_new, "soul": cmd_soul, "doctor": cmd_doctor, "logs": cmd_logs, "token": cmd_token,
+    "start": lambda a: cmd_service(a, "start"), "stop": lambda a: cmd_service(a, "stop"),
+    "restart": lambda a: cmd_service(a, "restart"),
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    fn = COMMANDS.get(argv[0])
+    if not fn:
+        print(f"Unknown command: {argv[0]}\n")
+        print(__doc__.strip())
+        return 1
+    return fn(argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

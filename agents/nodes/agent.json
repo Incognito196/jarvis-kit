@@ -1,0 +1,14 @@
+{
+  "name": "nodes",
+  "title": "My machines",
+  "description": "Reachability for the other computers you care about. Config-driven — no hostnames live in code.",
+  "version": "1.0.0",
+  "enabled": false,
+  "config": {
+    "port": 22,
+    "timeout": 1.5,
+    "hosts": [
+      {"name": "example-server", "host": "192.168.1.10"}
+    ]
+  }
+}

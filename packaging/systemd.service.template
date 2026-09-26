@@ -1,0 +1,14 @@
+[Unit]
+Description=Jarvis core bridge (voice + brain)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+ExecStart=__PYTHON__ __ROOT__/bridge.py
+Restart=always
+RestartSec=5
+Environment=PATH=__PATH__
+
+[Install]
+WantedBy=default.target
