@@ -37,15 +37,22 @@ IS_MAC = sys.platform == "darwin"
 
 # ---- .env (simple parser, stdlib only) --------------------------------------
 def load_env():
+    """Load .env. Within the file the LAST line for a key wins, so appending a
+    correction to the bottom does what you'd expect. The real environment still beats
+    the file, which is how the service plist and a one-off `FOO=bar python3 bridge.py`
+    stay in charge."""
     p = os.path.join(HERE, ".env")
     if not os.path.exists(p):
         return
+    values = {}
     for line in open(p, encoding="utf-8"):
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        values[k.strip()] = v.strip().strip('"').strip("'")
+    for k, v in values.items():
+        os.environ.setdefault(k, v)
 
 
 load_env()
